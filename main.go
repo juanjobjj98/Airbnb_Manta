@@ -1,68 +1,183 @@
-package main // Paquete principal requerido para construir el ejecutable.
+package main
 
-import ( // Inicia bloque de importaciones.
-	"bufio"   // Permite leer secuencias de texto complejas (con espacios) desde la consola.
-	"fmt"     // Paquete para imprimir texto interactivo en pantalla.
-	"log"     // Paquete para imprimir errores críticos y detener el programa si es necesario.
-	"os"      // Proporciona acceso a las funciones del sistema operativo, como el teclado (Stdin).
-	"strings" // Funciones para limpiar y procesar las cadenas de texto ingresadas.
-	"time"    // Paquete para procesar y validar el texto convirtiéndolo a fechas reales.
+import (
+	"encoding/csv"
+	"encoding/json"
+	"fmt"
+	"log"
+	"net/http"
+	"os"
+	"time"
 
-	"github.com/JJ/Airbnb_Manta/models"       // Importa el paquete de negocio local.
-	"github.com/JJ/Airbnb_Manta/repositories" // Importa el paquete de persistencia de datos local.
-) // Cierra importaciones.
+	"github.com/JJ/Airbnb_Manta/models"
+	"github.com/JJ/Airbnb_Manta/repositories"
+)
 
-func main() { // Función principal donde inicia la ejecución del programa.
-	fmt.Println("=========================================") // Imprime separador visual superior.
-	fmt.Println("  SISTEMA DE GESTIÓN AIRBNB (Consola)    ") // Imprime el título del software.
-	fmt.Println("=========================================") // Imprime separador visual inferior.
+type ReservaEntradaJSON struct {
+	Huesped      string  `json:"huesped"`
+	Email        string  `json:"email"`
+	Personas     int     `json:"personas"`
+	Mascotas     bool    `json:"mascotas"`
+	FechaIngreso string  `json:"fecha_ingreso"`
+	FechaSalida  string  `json:"fecha_salida"`
+	Precio       float64 `json:"precio"`
+	Canal        string  `json:"canal"`
+}
 
-	// 1. Invoca la función que crea la base de datos automáticamente si no existe.
-	err := repositories.InicializarBaseDeDatos() // Ejecuta la inicialización y atrapa un posible error.
-	if err != nil {                              // Si ocurrió un error grave de conexión...
-		log.Fatalf("❌ Error Crítico: %v\n", err) // ...imprime el error y aborta el programa inmediatamente.
-	} // Cierra bloque if.
-	fmt.Println("-----------------------------------------") // Separador visual.
+func main() {
+	repositories.InicializarBaseDeDatos()
 
-	reader := bufio.NewReader(os.Stdin) // Crea un lector que captura todo lo escrito en el teclado hasta presionar 'Enter'.
+	http.Handle("/", http.FileServer(http.Dir("./static")))
 
-	// 2. Bloque de ingreso interactivo: Nombre del huésped.
-	fmt.Print("Ingrese el nombre del huésped: ") // Imprime la instrucción en la misma línea.
-	huesped, _ := reader.ReadString('\n')        // Lee el texto ingresado incluyendo espacios hasta detectar el salto de línea.
-	huesped = strings.TrimSpace(huesped)         // Limpia el texto eliminando espacios extra y el propio salto de línea invisible.
+	// 1. POST /api/reservas (Crear Reserva con validación de Overbooking)
+	http.HandleFunc("POST /api/reservas", func(w http.ResponseWriter, r *http.Request) {
+		var input ReservaEntradaJSON
 
-	formato := "2006-01-02" // Define el estándar estricto de formato de fecha en el lenguaje Go.
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			http.Error(w, `{"error": "JSON inválido"}`, http.StatusBadRequest)
+			return
+		}
 
-	// 3. Bloque de ingreso interactivo: Fecha de llegada.
-	fmt.Print("Fecha de Ingreso (YYYY-MM-DD): ")                            // Solicita la fecha de entrada.
-	strIngreso, _ := reader.ReadString('\n')                                // Captura lo tipeado en teclado.
-	fechaIngreso, err := time.Parse(formato, strings.TrimSpace(strIngreso)) // Intenta transformar el texto ingresado en un objeto Time real.
-	if err != nil {                                                         // Si el usuario escribe mal el formato (ej. 15-03-2026)...
-		log.Fatal("❌ Formato inválido. Use YYYY-MM-DD (Ej: 2026-03-15)") // ...muestra el error y detiene el flujo.
-	} // Cierra bloque if.
+		ingreso, _ := time.Parse("2006-01-02", input.FechaIngreso)
+		salida, _ := time.Parse("2006-01-02", input.FechaSalida)
+		canal := models.CreateChannel(input.Canal)
 
-	// 4. Bloque de ingreso interactivo: Fecha de salida.
-	fmt.Print("Fecha de Salida (YYYY-MM-DD): ")                           // Solicita la fecha de salida.
-	strSalida, _ := reader.ReadString('\n')                               // Captura lo tipeado en teclado.
-	fechaSalida, err := time.Parse(formato, strings.TrimSpace(strSalida)) // Convierte el texto en un objeto Time.
-	if err != nil {                                                       // Si el formato es erróneo...
-		log.Fatal("❌ Formato inválido. Use YYYY-MM-DD") // ...aborta la ejecución indicando el error.
-	} // Cierra bloque if.
+		reserva, err := models.NewReservation(
+			input.Huesped, input.Email, input.Personas, input.Mascotas,
+			ingreso, salida, input.Precio, canal)
 
-	// 5. Instanciación usando los principios de Programación Orientada a Objetos.
-	canalAirbnb := models.NewAirbnbChannel()                                                    // Crea una instancia concreta del canal de venta (Cumple con la interfaz).
-	nuevaReserva, err := models.NewReservation(huesped, fechaIngreso, fechaSalida, canalAirbnb) // Pasa los datos por las reglas de negocio en el modelo.
-	if err != nil {                                                                             // Si el modelo rechaza la creación (ej. salida antes de entrada)...
-		log.Fatalf("❌ Error de Negocio: %v\n", err) // ...detiene el programa imprimiendo la regla violada.
-	} // Cierra bloque if.
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
 
-	// 6. Persistencia de los datos validados hacia el servidor SQL.
-	fmt.Println("\nGuardando en SQL Server...")        // Informa al usuario que inició el proceso de red.
-	err = repositories.GuardarReservaSQL(nuevaReserva) // Envía el objeto validado a la capa de persistencia.
-	if err != nil {                                    // Si hay falla de red o de SQL...
-		log.Fatalf("❌ Fallo al guardar: %v\n", err) // ...muestra el mensaje de fallo y aborta.
-	} // Cierra bloque if.
+		err = repositories.VerificarDisponibilidad(ingreso, salida)
+		if err != nil {
+			w.WriteHeader(http.StatusConflict)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
 
-	// 7. Finalización exitosa.
-	fmt.Printf("✅ ¡Éxito! Reserva de %s guardada correctamente.\n", nuevaReserva.GetGuestName()) // Extrae el nombre con el getter y confirma el fin del programa.
-} // Cierra la función principal.
+		repositories.GuardarReservaSQL(reserva)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		json.NewEncoder(w).Encode(map[string]string{"mensaje": "Reserva creada exitosamente"})
+	})
+
+	// 2. GET /api/reservas (Listar Todas)
+	http.HandleFunc("GET /api/reservas", func(w http.ResponseWriter, r *http.Request) {
+		reservas, _ := repositories.ObtenerTodasLasReservas()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(reservas)
+	})
+
+	// 3. DELETE /api/reservas/{id} (Eliminar)
+	http.HandleFunc("DELETE /api/reservas/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		err := repositories.EliminarReservaSQL(id)
+		w.Header().Set("Content-Type", "application/json")
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": "No se pudo eliminar"})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]string{"mensaje": "Eliminada con éxito"})
+	})
+
+	// 4. GET /api/reservas/{id}
+	http.HandleFunc("GET /api/reservas/{id}", func(w http.ResponseWriter, r *http.Request) {
+		id := r.PathValue("id")
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"mensaje": "Detalle de la reserva " + id})
+	})
+
+	// 5. GET /api/canales
+	http.HandleFunc("GET /api/canales", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode([]string{"Airbnb", "Booking", "Directo"})
+	})
+
+	// 6. GET /api/kpis
+	http.HandleFunc("GET /api/kpis", func(w http.ResponseWriter, r *http.Request) {
+		reservas, _ := repositories.ObtenerTodasLasReservas()
+		var totalNeto float64
+		for _, res := range reservas {
+			totalNeto += res.GananciaNeta
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"total_reservas": len(reservas),
+			"ganancia_neta":  totalNeto,
+		})
+	})
+
+	// 7. GET /api/ping
+	http.HandleFunc("GET /api/ping", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{"estado": "Activo"})
+	})
+
+	// 8. POST /api/reportes/async (CONCURRENCIA Y REPORTE PROFESIONAL PARA EXCEL)
+	http.HandleFunc("POST /api/reportes/async", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusAccepted)
+		json.NewEncoder(w).Encode(map[string]string{
+			"mensaje": "Generando reporte profesional en segundo plano. Revisa tu carpeta en 3 segundos.",
+		})
+
+		go func() {
+			fmt.Println("\n[CONCURRENCIA] Extrayendo datos financieros de SQL Server...")
+			time.Sleep(3 * time.Second)
+
+			reservas, err := repositories.ObtenerTodasLasReservas()
+			if err != nil {
+				fmt.Println("[ERROR] No se pudo leer la base de datos.")
+				return
+			}
+
+			timestamp := time.Now().Format("2006-01-02_15-04-05")
+			nombreArchivo := fmt.Sprintf("Reporte_Financiero_%s.csv", timestamp)
+
+			archivo, err := os.Create(nombreArchivo)
+			if err != nil {
+				fmt.Println("[ERROR] No se pudo crear el archivo.")
+				return
+			}
+			defer archivo.Close()
+
+			// TRUCO PRO 1: Escribir el BOM UTF-8 para que Excel lea bien los acentos
+			archivo.WriteString("\xEF\xBB\xBF")
+
+			escritor := csv.NewWriter(archivo)
+			// TRUCO PRO 2: Cambiar el separador a PUNTO Y COMA para el Excel en español
+			escritor.Comma = ';'
+			defer escritor.Flush()
+
+			// Escribimos las cabeceras (ahora con acentos sin miedo)
+			escritor.Write([]string{"Huésped", "Email", "Fecha Ingreso", "Fecha Salida", "Canal de Venta", "Ganancia Neta ($)"})
+
+			var sumaTotal float64
+			for _, res := range reservas {
+				escritor.Write([]string{
+					res.Huesped,
+					res.Email,
+					res.FechaIngreso.Format("2006-01-02"),
+					res.FechaSalida.Format("2006-01-02"),
+					res.CanalVenta,
+					// Formateamos el número para que no tenga problemas
+					fmt.Sprintf("%.2f", res.GananciaNeta),
+				})
+				sumaTotal += res.GananciaNeta
+			}
+
+			// Fila final de totales (dejamos columnas en blanco para que cuadre al final)
+			escritor.Write([]string{"", "", "", "", "TOTAL ACUMULADO:", fmt.Sprintf("%.2f", sumaTotal)})
+
+			fmt.Printf("[CONCURRENCIA] ✅ ÉXITO: Archivo profesional '%s' generado.\n\n", nombreArchivo)
+		}()
+	})
+
+	fmt.Println("🚀 Servidor Web RESTful (8 Servicios) Activo -> http://localhost:8080")
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}

@@ -1,39 +1,100 @@
-package repositories // Define el paquete al que pertenece este archivo.
+package repositories
 
-import ( // Inicia bloque de importaciones.
-	"database/sql" // Paquete de base de datos estándar de Go.
-	"fmt"          // Paquete para formatear strings de error.
+import (
+	"database/sql"
+	"fmt"
+	"time"
 
-	"github.com/JJ/Airbnb_Manta/models" // Importa tus modelos para extraer la información.
-	_ "github.com/microsoft/go-mssqldb" // Importa el driver de SQL Server en segundo plano.
-) // Cierra importaciones.
+	"github.com/JJ/Airbnb_Manta/models"
+	_ "github.com/microsoft/go-mssqldb"
+)
 
-// GuardarReservaSQL ejecuta un comando INSERT para guardar una reserva en la base de datos.
-func GuardarReservaSQL(reserva *models.Reservation) error { // Recibe el puntero de la reserva a guardar.
-	connString := "server=localhost;port=1433;database=AirbnbManta;trusted_connection=yes;" // Define la cadena de conexión.
-	db, err := sql.Open("sqlserver", connString)                                            // Inicializa la conexión.
-	if err != nil {                                                                         // Si la conexión inicial falla...
-		return fmt.Errorf("error abriendo conexión: %v", err) // ...devuelve el error.
-	} // Cierra bloque if.
-	defer db.Close() // Asegura la liberación de recursos de red y memoria.
+type ReservaWeb struct {
+	ID           string
+	Huesped      string
+	Email        string
+	Personas     int
+	Mascotas     bool
+	FechaIngreso time.Time
+	FechaSalida  time.Time
+	PrecioTotal  float64
+	GananciaNeta float64
+	CanalVenta   string
+}
 
-	// Prepara la consulta parametrizada para evitar inyección SQL (@p1, @p2, etc.).
-	query := `
-		INSERT INTO Reservas (ID, Huesped, FechaIngreso, FechaSalida, CanalVenta) 
-		VALUES (@p1, @p2, @p3, @p4, @p5)` // Cierra el texto de la consulta.
+func GuardarReservaSQL(reserva *models.Reservation) error {
+	conn := "server=localhost;port=1433;database=AirbnbManta;trusted_connection=yes;"
+	db, _ := sql.Open("sqlserver", conn)
+	defer db.Close()
 
-	// Ejecuta la consulta mapeando los getters de la reserva a los parámetros @p de SQL.
-	_, err = db.Exec(query, // Pasa la consulta base.
-		reserva.GetID(),                       // @p1: Extrae el ID privado.
-		reserva.GetGuestName(),                // @p2: Extrae el nombre del huésped.
-		reserva.GetStartDate(),                // @p3: Extrae la fecha de entrada.
-		reserva.GetEndDate(),                  // @p4: Extrae la fecha de salida.
-		reserva.GetChannel().GetChannelName(), // @p5: Extrae el nombre del canal desde la interfaz de ventas.
-	) // Finaliza los parámetros de ejecución.
+	query := `INSERT INTO Reservas (ID, Huesped, Email, Personas, Mascotas, FechaIngreso, FechaSalida, PrecioTotal, GananciaNeta, CanalVenta) 
+			  VALUES (@p1, @p2, @p3, @p4, @p5, @p6, @p7, @p8, @p9, @p10)`
 
-	if err != nil { // Si la inserción a nivel de base de datos falla...
-		return fmt.Errorf("error ejecutando INSERT: %v", err) // ...retorna el error de base de datos.
-	} // Cierra bloque if.
+	_, err := db.Exec(query,
+		reserva.GetID(), reserva.GetGuestName(), reserva.GetEmail(),
+		reserva.GetGuests(), reserva.GetPets(), reserva.GetStartDate(),
+		reserva.GetEndDate(), reserva.GetTotalPrice(), reserva.GetNetProfit(),
+		reserva.GetChannel().GetChannelName())
+	return err
+}
 
-	return nil // Retorna nil, confirmando que la reserva está guardada en el disco.
-} // Cierra la función.
+func ObtenerTodasLasReservas() ([]ReservaWeb, error) {
+	conn := "server=localhost;port=1433;database=AirbnbManta;trusted_connection=yes;"
+	db, _ := sql.Open("sqlserver", conn)
+	defer db.Close()
+
+	query := "SELECT ID, Huesped, Email, Personas, Mascotas, FechaIngreso, FechaSalida, PrecioTotal, GananciaNeta, CanalVenta FROM Reservas ORDER BY FechaIngreso DESC"
+	filas, err := db.Query(query)
+	if err != nil {
+		return nil, err
+	}
+	defer filas.Close()
+
+	var lista []ReservaWeb
+	for filas.Next() {
+		var r ReservaWeb
+		filas.Scan(&r.ID, &r.Huesped, &r.Email, &r.Personas, &r.Mascotas, &r.FechaIngreso, &r.FechaSalida, &r.PrecioTotal, &r.GananciaNeta, &r.CanalVenta)
+		lista = append(lista, r)
+	}
+	return lista, nil
+}
+
+// EliminarReservaSQL borra un registro por su ID
+func EliminarReservaSQL(id string) error {
+	conn := "server=localhost;port=1433;database=AirbnbManta;trusted_connection=yes;"
+	db, err := sql.Open("sqlserver", conn)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	_, err = db.Exec("DELETE FROM Reservas WHERE ID = @p1", id)
+	return err
+}
+
+// VerificarDisponibilidad comprueba si ya existe una reserva en ese rango de fechas
+func VerificarDisponibilidad(ingreso, salida time.Time) error {
+	conn := "server=localhost;port=1433;database=AirbnbManta;trusted_connection=yes;"
+	db, err := sql.Open("sqlserver", conn)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	// Lógica SQL: Hay choque si una reserva existente entra ANTES de que la nueva salga,
+	// Y sale DESPUÉS de que la nueva entre.
+	query := `SELECT COUNT(*) FROM Reservas WHERE FechaIngreso < @p1 AND FechaSalida > @p2`
+
+	var cantidad int
+	// @p1 = salida nueva, @p2 = ingreso nuevo
+	err = db.QueryRow(query, salida, ingreso).Scan(&cantidad)
+	if err != nil {
+		return err
+	}
+
+	if cantidad > 0 {
+		return fmt.Errorf("las fechas seleccionadas ya están ocupadas por otra reserva")
+	}
+
+	return nil
+}

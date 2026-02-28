@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Airbnb Manta - Inteligencia de Negocios</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+
+<body class="bg-slate-100 font-sans">
+    <nav class="bg-gray-900 p-4 shadow-md text-white flex justify-between items-center">
+        <h1 class="text-2xl font-bold"><i class="fas fa-chart-line text-blue-400"></i> BI Manta - Dashboard</h1>
+        <button onclick="solicitarReporte()" class="bg-blue-600 hover:bg-blue-500 px-4 py-2 rounded text-sm font-bold">
+            <i class="fas fa-sync-alt"></i> Generar Reporte Asíncrono
+        </button>
+    </nav>
+
+    <div class="container mx-auto mt-6 px-4">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+            <div class="bg-white rounded shadow p-4 border-l-4 border-blue-500">
+                <p class="text-gray-500 text-sm font-bold">Total Reservas</p>
+                <p class="text-2xl font-bold" id="kpi-reservas">0</p>
+            </div>
+            <div class="bg-white rounded shadow p-4 border-l-4 border-yellow-500">
+                <p class="text-gray-500 text-sm font-bold">Ingresos Brutos Estimados</p>
+                <p class="text-2xl font-bold text-gray-800" id="kpi-bruto">$0.00</p>
+            </div>
+            <div class="bg-white rounded shadow p-4 border-l-4 border-green-500">
+                <p class="text-gray-500 text-sm font-bold">Ganancia Neta (Bolsillo)</p>
+                <p class="text-2xl font-bold text-green-600" id="kpi-neto">$0.00</p>
+            </div>
+        </div>
+
+        <div class="flex flex-col lg:flex-row gap-6">
+            <div class="w-full lg:w-1/3 bg-white shadow rounded p-6 border-t-4 border-blue-600">
+                <h2 class="font-bold mb-4 text-gray-700">Nueva Reserva</h2>
+                <form id="form-reserva">
+                    <input id="huesped" class="w-full mb-3 p-2 border rounded" type="text" placeholder="Nombre completo"
+                        required>
+                    <input id="email" class="w-full mb-3 p-2 border rounded" type="email"
+                        placeholder="Correo electrónico" required>
+                    <div class="flex gap-2 mb-3">
+                        <input id="personas" class="w-1/2 p-2 border rounded" type="number" min="1"
+                            placeholder="Huéspedes" required>
+                        <label class="w-1/2 flex items-center gap-2 p-2 border rounded bg-gray-50">
+                            <input id="mascotas" type="checkbox"> 🐾 Mascotas
+                        </label>
+                    </div>
+                    <div class="flex gap-2 mb-3">
+                        <div class="w-1/2"><label class="text-xs">Ingreso</label><input id="fecha_ingreso"
+                                class="w-full p-2 border rounded" type="date" required></div>
+                        <div class="w-1/2"><label class="text-xs">Salida</label><input id="fecha_salida"
+                                class="w-full p-2 border rounded" type="date" required></div>
+                    </div>
+                    <div class="flex gap-2 mb-4">
+                        <div class="w-1/2">
+                            <label class="text-xs">Precio Total ($)</label>
+                            <input id="precio" class="w-full p-2 border rounded" type="number" step="0.01"
+                                placeholder="Ej. 150.00" required>
+                        </div>
+                        <div class="w-1/2">
+                            <label class="text-xs">Canal</label>
+                            <select id="canal" class="w-full p-2 border rounded">
+                                <option value="Airbnb">Airbnb</option>
+                                <option value="Booking">Booking</option>
+                                <option value="Directo">Directo</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button class="w-full bg-blue-600 hover:bg-blue-800 text-white font-bold py-2 rounded transition"
+                        type="submit">
+                        Guardar Registro JSON
+                    </button>
+                </form>
+            </div>
+
+            <div class="w-full lg:w-2/3 bg-white shadow rounded p-6 border-t-4 border-green-500">
+                <table class="w-full text-left text-sm">
+                    <thead class="border-b bg-gray-50 text-gray-600">
+                        <tr>
+                            <th class="py-2 px-2">Huésped</th>
+                            <th class="py-2">Detalles</th>
+                            <th class="py-2">Fechas</th>
+                            <th class="py-2">Canal</th>
+                            <th class="py-2 text-right">Neto</th>
+                            <th class="py-2 text-center">Acción</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tabla-reservas"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // 1. CARGAR DATOS (Servicio GET)
+        function cargarReservas() {
+            fetch('/api/reservas')
+                .then(res => res.json())
+                .then(data => {
+                    const tbody = document.getElementById('tabla-reservas');
+                    tbody.innerHTML = '';
+                    let totalBruto = 0, totalNeto = 0;
+
+                    if (data && data.length > 0) {
+                        document.getElementById('kpi-reservas').innerText = data.length;
+
+                        data.forEach(r => {
+                            totalBruto += r.PrecioTotal;
+                            totalNeto += r.GananciaNeta;
+
+                            let color = r.CanalVenta === "Directo" ? "bg-green-100 text-green-800" : "bg-blue-100 text-blue-800";
+                            if (r.CanalVenta === "Airbnb") color = "bg-red-100 text-red-800";
+                            let mascotas = r.Mascotas ? "🐾" : "";
+
+                            tbody.innerHTML += `
+                                <tr class="border-b hover:bg-gray-50">
+                                    <td class="py-3 px-2 font-bold">
+                                        ${r.Huesped} <br> <span class="text-xs font-normal text-gray-500">${r.Email}</span>
+                                    </td>
+                                    <td class="py-3">👥 ${r.Personas} ${mascotas}</td>
+                                    <td class="py-3 text-xs text-gray-600">${r.FechaIngreso.split('T')[0]} <br> ${r.FechaSalida.split('T')[0]}</td>
+                                    <td class="py-3"><span class="px-2 py-1 text-xs font-bold rounded ${color}">${r.CanalVenta}</span></td>
+                                    <td class="py-3 text-right font-bold text-green-600">$${r.GananciaNeta.toFixed(2)}</td>
+                                    <td class="py-3 text-center">
+                                        <button onclick="eliminarReserva('${r.ID}')" class="bg-red-500 text-white px-2 py-1 rounded text-xs hover:bg-red-700">Eliminar</button>
+                                    </td>
+                                </tr>
+                            `;
+                        });
+
+                        document.getElementById('kpi-bruto').innerText = "$" + totalBruto.toFixed(2);
+                        document.getElementById('kpi-neto').innerText = "$" + totalNeto.toFixed(2);
+                    } else {
+                        document.getElementById('kpi-reservas').innerText = "0";
+                        document.getElementById('kpi-bruto').innerText = "$0.00";
+                        document.getElementById('kpi-neto').innerText = "$0.00";
+                        tbody.innerHTML = '<tr><td colspan="6" class="py-4 text-center text-gray-500">No hay reservas registradas.</td></tr>';
+                    }
+                });
+        }
+
+        // 2. ENVIAR DATOS SERIALIZADOS EN JSON (Servicio POST)
+        document.getElementById('form-reserva').addEventListener('submit', function (e) {
+            e.preventDefault(); // Evita el 404 recargando la página a la antigua
+
+            // Empaquetamos en JSON (Requisito d)
+            const payload = {
+                huesped: document.getElementById('huesped').value,
+                email: document.getElementById('email').value,
+                personas: parseInt(document.getElementById('personas').value),
+                mascotas: document.getElementById('mascotas').checked,
+                fecha_ingreso: document.getElementById('fecha_ingreso').value,
+                fecha_salida: document.getElementById('fecha_salida').value,
+                precio: parseFloat(document.getElementById('precio').value),
+                canal: document.getElementById('canal').value
+            };
+
+            fetch('/api/reservas', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            })
+                .then(res => res.json())
+                .then(data => {
+                    if (data.error) {
+                        alert("Error de validación (POO): " + data.error);
+                    } else {
+                        alert(data.mensaje);
+                        document.getElementById('form-reserva').reset();
+                        cargarReservas(); // Actualiza la tabla automáticamente
+                    }
+                })
+                .catch(err => console.error("Error en petición JSON:", err));
+        });
+
+        // 3. CONSUMIR SERVICIO DELETE
+        function eliminarReserva(id) {
+            if (confirm("¿Seguro que deseas eliminar esta reserva de SQL Server?")) {
+                fetch('/api/reservas/' + id, { method: 'DELETE' })
+                    .then(res => res.json())
+                    .then(data => {
+                        cargarReservas();
+                    });
+            }
+        }
+
+        // 4. INVOCAR CONCURRENCIA ASÍNCRONA (Requisito Concurrencia)
+        function solicitarReporte() {
+            fetch('/api/reportes/async', { method: 'POST' })
+                .then(res => res.json())
+                .then(data => alert("Mensaje del Servidor: " + data.mensaje));
+        }
+
+        // Al iniciar la página, cargar la tabla
+        document.addEventListener("DOMContentLoaded", cargarReservas);
+    </script>
+</body>
+
+</html>
