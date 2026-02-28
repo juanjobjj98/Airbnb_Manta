@@ -1,0 +1,9 @@
+# Ejecutables
+*.exe
+__debug_bin
+
+# Reportes generados (para que no ensucien tu repo)
+Reporte_Financiero_*.csv
+
+# Variables de entorno o configs locales
+.env
